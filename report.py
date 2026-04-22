@@ -133,7 +133,7 @@ def detect_risks(stats):
 # ===== 3. Gemini AI 分析 =====
 
 def ai_analysis(stats):
-    """调用 Gemini 生成持仓分析"""
+    """调用 AI 生成持仓分析，Gemini 失败自动降级到 AIHubMix"""
     stocks_summary = "\n".join([
         f"- {s['ticker']}: 持仓{s['quantity']:.2f}股, 均价{s['avg_price']:.2f}, "
         f"现价{s['current_price']:.2f}, 盈亏{s['pct_change']:+.1f}%, 占仓{s['weight']:.1f}%"
@@ -161,13 +161,43 @@ def ai_analysis(stats):
 
 语气专业简洁，不要废话，直接给结论。"""
 
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
-    payload = {"contents": [{"parts": [{"text": prompt}]}]}
+    # 先试 Gemini
+    try:
+        print("尝试 Gemini...")
+        url = (f"https://generativelanguage.googleapis.com/v1beta/models/"
+               f"gemini-1.5-flash-latest:generateContent?key={GEMINI_API_KEY}")
+        payload = {"contents": [{"parts": [{"text": prompt}]}]}
+        r = requests.post(url, json=payload, timeout=30)
+        r.raise_for_status()
+        data = r.json()
+        print("Gemini 成功")
+        return data["candidates"][0]["content"]["parts"][0]["text"]
+    except Exception as e:
+        print(f"Gemini 失败: {e}，切换到 AIHubMix...")
 
-    r = requests.post(url, json=payload, timeout=30)
-    r.raise_for_status()
-    data = r.json()
-    return data["candidates"][0]["content"]["parts"][0]["text"]
+    # 降级到 AIHubMix
+    AIHUBMIX_API_KEY = os.environ.get("AIHUBMIX_API_KEY", "")
+    if not AIHUBMIX_API_KEY:
+        return "AI 分析不可用（Gemini 限流，AIHubMix 未配置）"
+
+    try:
+        url = "https://aihubmix.com/v1/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {AIHUBMIX_API_KEY}",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "model": "gemini-2.0-flash",
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": 1000
+        }
+        r = requests.post(url, headers=headers, json=payload, timeout=30)
+        r.raise_for_status()
+        data = r.json()
+        print("AIHubMix 成功")
+        return data["choices"][0]["message"]["content"]
+    except Exception as e:
+        return f"AI 分析失败: {e}"
 
 
 # ===== 4. 格式化报告 =====
