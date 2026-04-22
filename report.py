@@ -6,17 +6,19 @@ Trading 212 持仓日报
 import os
 import json
 import requests
+import base64
 from datetime import datetime
 
 # ===== 配置 =====
-T212_API_KEY = os.environ["T212_API_KEY"]
 GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
 DISCORD_WEBHOOK_URL = os.environ["DISCORD_WEBHOOK_URL"]
 TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 TELEGRAM_CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
 
-T212_BASE = "https://live.trading212.com/api/v0"
-T212_HEADERS = {"Authorization": T212_API_KEY}
+T212_API_KEY = os.environ["T212_API_KEY"]
+T212_API_SECRET = os.environ["T212_API_SECRET"]
+credentials = base64.b64encode(f"{T212_API_KEY}:{T212_API_SECRET}".encode()).decode()
+T212_HEADERS = {"Authorization": f"Basic {credentials}"}
 
 
 # ===== 1. 拉取 Trading 212 数据 =====
