@@ -19,6 +19,7 @@ T212_API_KEY = os.environ["T212_API_KEY"]
 T212_API_SECRET = os.environ["T212_API_SECRET"]
 credentials = base64.b64encode(f"{T212_API_KEY}:{T212_API_SECRET}".encode()).decode()
 T212_HEADERS = {"Authorization": f"Basic {credentials}"}
+T212_BASE = "https://live.trading212.com/api/v0"
 
 
 # ===== 1. 拉取 Trading 212 数据 =====
