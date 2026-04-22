@@ -103,7 +103,7 @@ Go to your forked repo → `Settings` → `Secrets and variables` → `Actions` 
 |------------|------|:----:|
 | `SINGLE_STOCK_NOTIFY` | Single stock push mode: set to `true` to push immediately after each stock analysis | Optional |
 | `REPORT_TYPE` | Report type: `simple` (concise), `full` (complete), `brief` (3-5 sentences), Docker recommended: `full` | Optional |
-| `REPORT_LANGUAGE` | Report output language: `zh` (default Chinese) / `en` (English); also updates prompt instructions, templates, notification fallbacks, and fixed copy in the Web report view | Optional |
+| `REPORT_LANGUAGE` | Report output language: `zh` (default Chinese) / `en` (English); also updates prompt instructions, templates, notification fallbacks, and fixed copy in the Web report view. The bundled `daily_analysis.yml` already maps this variable, so setting it in Actions Secrets/Variables works out of the box | Optional |
 | `REPORT_TEMPLATES_DIR` | Jinja2 template directory (relative to project root, default `templates`) | Optional |
 | `REPORT_RENDERER_ENABLED` | Enable Jinja2 template rendering (default `false`, zero regression) | Optional |
 | `REPORT_INTEGRITY_ENABLED` | Enable report integrity checks, retry or placeholder on missing fields (default `true`) | Optional |
@@ -117,6 +117,7 @@ Go to your forked repo → `Settings` → `Secrets and variables` → `Actions` 
 |------------|------|:----:|
 | `STOCK_LIST` | Watchlist codes, e.g., `600519,300750,002594` | ✅ |
 | `TAVILY_API_KEYS` | [Tavily](https://tavily.com/) Search API (for news search) | Recommended |
+| `ANSPIRE_API_KEYS` | [Anspire AI Search](https://aisearch.anspire.cn/) Specially optimized for Chinese content (effectively enhances A-share analysis) | Optional |
 | `MINIMAX_API_KEYS` | [MiniMax](https://platform.minimaxi.com/) Coding Plan Web Search (structured search results) | Optional |
 | `BOCHA_API_KEYS` | [Bocha Search](https://open.bocha.cn/) Web Search API (Chinese search optimized, supports AI summaries, multiple keys comma-separated) | Optional |
 | `SERPAPI_API_KEYS` | [SerpAPI](https://serpapi.com/baidu-search-api?utm_source=github_daily_stock_analysis) Backup search | Optional |
@@ -234,6 +235,7 @@ Default schedule: Every weekday at **18:00 (Beijing Time)** automatic execution.
 | Variable | Description | Required |
 |--------|------|:----:|
 | `TAVILY_API_KEYS` | Tavily Search API Key (recommended) | Recommended |
+| `ANSPIRE_API_KEYS` | Anspire Search API Key (effectively enhances A-share analysis) | Optional | 
 | `MINIMAX_API_KEYS` | MiniMax Coding Plan Web Search (structured results) | Optional |
 | `BOCHA_API_KEYS` | Bocha Search API Key (Chinese optimized) | Optional |
 | `BRAVE_API_KEYS` | Brave Search API Key (US stocks optimized) | Optional |
@@ -306,6 +308,11 @@ Default schedule: Every weekday at **18:00 (Beijing Time)** automatic execution.
 
 The image uses prebuilt frontend assets under `/app/static` at runtime, so the running `server` container does not require the `apps/dsa-web` source tree or runtime `npm`. If WebUI cannot be opened after Docker deployment, first verify that `/app/static/index.html` exists inside the container.
 
+Official image registries:
+
+- GHCR: `ghcr.io/zhulinsen/daily_stock_analysis:<tag>`
+- Docker Hub: `<DOCKERHUB_USERNAME>/daily_stock_analysis:<tag>` (driven by the publisher's `DOCKERHUB_USERNAME` secret; the official release uses `zhulinsen/daily_stock_analysis`)
+
 ### Quick Start
 
 ```bash
@@ -329,6 +336,37 @@ docker-compose -f ./docker/docker-compose.yml up -d            # Start both mode
 docker-compose -f ./docker/docker-compose.yml logs -f server
 ```
 
+### Run Official Images Directly
+
+If you do not want to keep the source tree on the target machine, you can run the published image directly:
+
+```bash
+# Web/API mode
+docker pull zhulinsen/daily_stock_analysis:latest
+docker run -d \
+  --name dsa-server \
+  --env-file .env \
+  -p 8000:8000 \
+  -v "$(pwd)/data:/app/data" \
+  -v "$(pwd)/logs:/app/logs" \
+  -v "$(pwd)/reports:/app/reports" \
+  -v "$(pwd)/.env:/app/.env" \
+  zhulinsen/daily_stock_analysis:latest \
+  python main.py --serve-only --host 0.0.0.0 --port 8000
+
+# Scheduled-task mode
+docker run -d \
+  --name dsa-analyzer \
+  --env-file .env \
+  -v "$(pwd)/data:/app/data" \
+  -v "$(pwd)/logs:/app/logs" \
+  -v "$(pwd)/reports:/app/reports" \
+  -v "$(pwd)/.env:/app/.env" \
+  zhulinsen/daily_stock_analysis:latest
+```
+
+For pinned deployments or easier rollback, replace `latest` with a concrete version tag such as `v3.13.0`.
+
 ### Run Mode Description
 
 | Command | Description | Port |
@@ -345,17 +383,20 @@ docker-compose -f ./docker/docker-compose.yml logs -f server
 version: '3.8'
 
 x-common: &common
-  build: .
+  build:
+    context: ..
+    dockerfile: docker/Dockerfile
   restart: unless-stopped
   env_file:
-    - .env
+    - ../.env
   environment:
     - TZ=Asia/Shanghai
   volumes:
-    - ./data:/app/data
-    - ./logs:/app/logs
-    - ./reports:/app/reports
-    - ./.env:/app/.env
+    - ../data:/app/data
+    - ../logs:/app/logs
+    - ../reports:/app/reports
+    - ../.env:/app/.env
+    - ../strategies:/app/strategies:ro
 
 services:
   # Scheduled task mode
@@ -367,10 +408,30 @@ services:
   server:
     <<: *common
     container_name: stock-server
-    command: ["python", "main.py", "--serve-only", "--host", "0.0.0.0", "--port", "8000"]
+    command: ["python", "main.py", "--serve-only", "--host", "0.0.0.0", "--port", "${API_PORT:-8000}"]
     ports:
-      - "8000:8000"
+      - "${API_PORT:-8000}:${API_PORT:-8000}"
 ```
+
+### `.env` and Volume Mapping
+
+For both `docker run` and Compose, keep these two layers in mind:
+
+- Environment injection: `--env-file .env` or Compose `env_file`
+  This passes key/value pairs from `.env` into the container process environment.
+- File mapping: `-v "$(pwd)/.env:/app/.env"` or Compose `../.env:/app/.env`
+  This mounts the same `.env` file into the container so the Web settings page and backend read/write the same persisted config file.
+
+Recommended host mappings:
+
+- `./data:/app/data` for runtime data and database files
+- `./logs:/app/logs` for logs
+- `./reports:/app/reports` for generated reports
+- `./strategies:/app/strategies:ro` for custom strategy YAML files
+
+Optional static asset override:
+
+- `./static:/app/static:ro`
 
 ### Common Commands
 
@@ -392,8 +453,17 @@ docker-compose -f ./docker/docker-compose.yml up -d server
 ### Manual Image Build
 
 ```bash
-docker build -t stock-analysis .
-docker run -d --env-file .env -p 8000:8000 -v ./data:/app/data stock-analysis python main.py --serve-only --host 0.0.0.0 --port 8000
+docker build -f docker/Dockerfile -t stock-analysis .
+docker run -d \
+  --name dsa-server-local \
+  --env-file .env \
+  -p 8000:8000 \
+  -v "$(pwd)/data:/app/data" \
+  -v "$(pwd)/logs:/app/logs" \
+  -v "$(pwd)/reports:/app/reports" \
+  -v "$(pwd)/.env:/app/.env" \
+  stock-analysis \
+  python main.py --serve-only --host 0.0.0.0 --port 8000
 ```
 
 ---
