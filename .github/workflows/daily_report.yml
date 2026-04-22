@@ -1,0 +1,33 @@
+name: 每日持仓日报
+
+on:
+  schedule:
+    # 美股收盘后 北京时间 每天 05:30（夏令时）/ 06:30（冬令时）
+    # 这里设 22:30 UTC = 北京时间 06:30
+    - cron: '30 13 * * 1-5'
+  workflow_dispatch:  # 支持手动触发
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Run portfolio report
+        env:
+          T212_API_KEY: ${{ secrets.T212_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python report.py
