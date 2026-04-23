@@ -157,7 +157,7 @@ def fetch_news(tickers):
 
 
 def fetch_sentiment(tickers):
-    """用 Social Sentiment API 获取美股情绪"""
+    """用 Adanos API 获取 Reddit/X 情绪数据"""
     if not SOCIAL_SENTIMENT_API_KEY:
         print("Social Sentiment 未配置，跳过情绪分析")
         return {}
@@ -166,14 +166,22 @@ def fetch_sentiment(tickers):
     for ticker in tickers:
         try:
             r = requests.get(
-                f"https://api.adanos.org/sentiment/{ticker}",
-                headers={"Authorization": f"Bearer {SOCIAL_SENTIMENT_API_KEY}"},
+                f"https://api.adanos.org/reddit/stocks/{ticker}",
+                headers={"X-API-Key": SOCIAL_SENTIMENT_API_KEY},
                 timeout=10
             )
             r.raise_for_status()
             data = r.json()
-            sentiment_by_ticker[ticker] = data.get("sentiment", "unknown")
-            print(f"{ticker} 情绪: {sentiment_by_ticker[ticker]}")
+            # 提取关键字段
+            buzz = data.get("buzz_score", "N/A")
+            sentiment = data.get("sentiment", "N/A")
+            bullish_pct = data.get("bullish_pct", "N/A")
+            trend = data.get("trend", "N/A")
+            sentiment_by_ticker[ticker] = (
+                f"情绪:{sentiment} 看多:{bullish_pct}% "
+                f"热度:{buzz}/100 趋势:{trend}"
+            )
+            print(f"{ticker} 情绪获取成功")
         except Exception as e:
             print(f"{ticker} 情绪获取失败: {e}")
 
