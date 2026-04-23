@@ -10,7 +10,7 @@ import base64
 from datetime import datetime
 
 # ===== 配置 =====
-GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
+ANTHROPIC_API_KEY = os.environ["ANTHROPIC_API_KEY"]
 DISCORD_WEBHOOK_URL = os.environ["DISCORD_WEBHOOK_URL"]
 TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 TELEGRAM_CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
@@ -133,7 +133,7 @@ def detect_risks(stats):
 # ===== 3. Gemini AI 分析 =====
 
 def ai_analysis(stats):
-    """调用 AI 生成持仓分析，Gemini 失败自动降级到 AIHubMix"""
+    """调用 Claude 生成持仓分析"""
     stocks_summary = "\n".join([
         f"- {s['ticker']}: 持仓{s['quantity']:.2f}股, 均价{s['avg_price']:.2f}, "
         f"现价{s['current_price']:.2f}, 盈亏{s['pct_change']:+.1f}%, 占仓{s['weight']:.1f}%"
@@ -161,43 +161,25 @@ def ai_analysis(stats):
 
 语气专业简洁，不要废话，直接给结论。"""
 
-    # 先试 Gemini
     try:
-        print("尝试 Gemini...")
-        url = (f"https://generativelanguage.googleapis.com/v1beta/models/"
-               f"gemini-1.5-flash-latest:generateContent?key={GEMINI_API_KEY}")
-        payload = {"contents": [{"parts": [{"text": prompt}]}]}
-        r = requests.post(url, json=payload, timeout=30)
-        r.raise_for_status()
-        data = r.json()
-        print("Gemini 成功")
-        return data["candidates"][0]["content"]["parts"][0]["text"]
-    except Exception as e:
-        print(f"Gemini 失败: {e}，切换到 AIHubMix...")
-
-    # 降级到 AIHubMix
-    AIHUBMIX_API_KEY = os.environ.get("AIHUBMIX_API_KEY", "")
-    if not AIHUBMIX_API_KEY:
-        return "AI 分析不可用（Gemini 限流，AIHubMix 未配置）"
-
-    try:
-        url = "https://aihubmix.com/v1/chat/completions"
+        url = "https://api.anthropic.com/v1/messages"
         headers = {
-            "Authorization": f"Bearer {AIHUBMIX_API_KEY}",
-            "Content-Type": "application/json"
+            "x-api-key": ANTHROPIC_API_KEY,
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json"
         }
         payload = {
-            "model": "gemini-2.0-flash",
-            "messages": [{"role": "user", "content": prompt}],
-            "max_tokens": 1000
+            "model": "claude-haiku-4-5-20251001",
+            "max_tokens": 1024,
+            "messages": [{"role": "user", "content": prompt}]
         }
         r = requests.post(url, headers=headers, json=payload, timeout=30)
         r.raise_for_status()
         data = r.json()
-        print("AIHubMix 成功")
-        return data["choices"][0]["message"]["content"]
+        return data["content"][0]["text"]
     except Exception as e:
-        return f"AI 分析失败: {e}"
+        print(f"Claude 调用失败: {e}")
+        return "AI 分析暂时不可用"
 
 
 # ===== 4. 格式化报告 =====
