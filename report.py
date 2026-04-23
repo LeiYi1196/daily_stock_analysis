@@ -301,6 +301,7 @@ def main():
     print(f"[{datetime.now()}] 开始获取持仓数据...")
 
     positions = get_portfolio()
+    print("原始持仓数据:", json.dumps(positions, indent=2)) 
     cash_info = get_account_cash()
 
     if not positions:
