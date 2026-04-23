@@ -24,6 +24,15 @@ T212_BASE = "https://live.trading212.com/api/v0"
 TAVILY_API_KEY = os.environ.get("TAVILY_API_KEY", "")
 SOCIAL_SENTIMENT_API_KEY = os.environ.get("SOCIAL_SENTIMENT_API_KEY", "")
 
+# 字典
+# Trading 212 老代码 -> 实际股票代码映射
+TICKER_MAP = {
+    "IPXX": "USAR",
+    "VACQ": "RKLB",
+    "SNDK1": "SNDK",
+    "YNDX": "NBIS",
+}
+
 
 # ===== 1. 拉取 Trading 212 数据 =====
 
@@ -51,13 +60,13 @@ def calc_portfolio_stats(positions, cash_info):
 
     for pos in positions:
         ticker = pos.get("ticker", "").replace("_US_EQ", "").replace("_EQ", "")
+        ticker = TICKER_MAP.get(ticker, ticker)  
         quantity = pos.get("quantity", 0)
         avg_price = pos.get("averagePrice", 0)
         current_price = pos.get("currentPrice", 0)
         ppl = pos.get("ppl", 0)
-
-        invested = quantity * avg_price
-        current_value = quantity * current_price
+        invested = quantity * avg_price    
+        current_value = invested + ppl  # 直接用API返回的盈亏
         pct_change = ((current_price - avg_price) / avg_price * 100) if avg_price else 0
 
         total_invested += invested
