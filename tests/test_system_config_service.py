@@ -5,6 +5,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from tests.litellm_stub import ensure_litellm_stub
@@ -57,6 +58,111 @@ class SystemConfigServiceTestCase(unittest.TestCase):
         self.assertEqual(items["GEMINI_API_KEY"]["value"], "secret-key-value")
         self.assertFalse(items["GEMINI_API_KEY"]["is_masked"])
         self.assertTrue(items["GEMINI_API_KEY"]["raw_value_exists"])
+
+    def test_get_setup_status_reports_required_gaps_for_empty_config(self) -> None:
+        self._rewrite_env("")
+
+        with patch.dict(os.environ, {}, clear=True):
+            status = self.service.get_setup_status()
+
+        self.assertFalse(status["is_complete"])
+        self.assertFalse(status["ready_for_smoke"])
+        self.assertEqual(status["next_step_key"], "llm_primary")
+        self.assertIn("llm_primary", status["required_missing_keys"])
+        self.assertIn("stock_list", status["required_missing_keys"])
+
+    def test_get_setup_status_marks_minimal_config_complete(self) -> None:
+        self._rewrite_env(
+            "LITELLM_MODEL=gemini/gemini-3-flash-preview",
+            "GEMINI_API_KEY=secret-key-value",
+            "STOCK_LIST=600519",
+        )
+
+        with patch.dict(os.environ, {}, clear=True):
+            status = self.service.get_setup_status()
+
+        checks = {check["key"]: check for check in status["checks"]}
+        self.assertTrue(status["is_complete"])
+        self.assertTrue(status["ready_for_smoke"])
+        self.assertEqual(checks["llm_primary"]["status"], "configured")
+        self.assertEqual(checks["llm_agent"]["status"], "inherited")
+        self.assertEqual(checks["stock_list"]["status"], "configured")
+        self.assertEqual(checks["notification"]["status"], "optional")
+
+    def test_get_setup_status_accepts_direct_env_primary_without_provider_key(self) -> None:
+        self._rewrite_env(
+            "LITELLM_MODEL=minimax/MiniMax-M1",
+            "STOCK_LIST=600519",
+        )
+
+        with patch.dict(os.environ, {}, clear=True):
+            status = self.service.get_setup_status()
+
+        checks = {check["key"]: check for check in status["checks"]}
+        self.assertTrue(status["is_complete"])
+        self.assertEqual(checks["llm_primary"]["status"], "configured")
+        self.assertEqual(checks["llm_agent"]["status"], "inherited")
+
+    def test_get_setup_status_matches_notification_channel_requirements(self) -> None:
+        base_lines = [
+            "LITELLM_MODEL=gemini/gemini-3-flash-preview",
+            "GEMINI_API_KEY=secret-key-value",
+            "STOCK_LIST=600519",
+        ]
+
+        self._rewrite_env(*base_lines, "PUSHOVER_USER_KEY=user-key")
+        with patch.dict(os.environ, {}, clear=True):
+            status = self.service.get_setup_status()
+        pushover_partial = next(check for check in status["checks"] if check["key"] == "notification")
+        self.assertEqual(pushover_partial["status"], "optional")
+
+        self._rewrite_env(*base_lines, "PUSHOVER_USER_KEY=user-key", "PUSHOVER_API_TOKEN=app-token")
+        with patch.dict(os.environ, {}, clear=True):
+            status = self.service.get_setup_status()
+        pushover_complete = next(check for check in status["checks"] if check["key"] == "notification")
+        self.assertEqual(pushover_complete["status"], "configured")
+
+        self._rewrite_env(*base_lines, "SLACK_BOT_TOKEN=xoxb-test", "SLACK_CHANNEL_ID=C123")
+        with patch.dict(os.environ, {}, clear=True):
+            status = self.service.get_setup_status()
+        slack_complete = next(check for check in status["checks"] if check["key"] == "notification")
+        self.assertEqual(slack_complete["status"], "configured")
+
+    def test_get_setup_status_uses_runtime_env_without_reloading_singletons(self) -> None:
+        self._rewrite_env("")
+
+        with patch.dict(
+            os.environ,
+            {
+                "LITELLM_MODEL": "gemini/gemini-3-flash-preview",
+                "GEMINI_API_KEY": "runtime-secret",
+                "STOCK_LIST": "600519",
+            },
+            clear=True,
+        ), patch("src.services.system_config_service.Config.reset_instance") as mock_reset, \
+             patch("src.services.system_config_service.setup_env") as mock_setup_env:
+            status = self.service.get_setup_status()
+
+        self.assertTrue(status["is_complete"])
+        mock_reset.assert_not_called()
+        mock_setup_env.assert_not_called()
+
+    def test_get_setup_status_storage_check_does_not_create_database_parent(self) -> None:
+        missing_parent = Path(self.temp_dir.name) / "missing-data"
+        db_path = missing_parent / "stock_analysis.db"
+        self._rewrite_env(
+            "LITELLM_MODEL=gemini/gemini-3-flash-preview",
+            "GEMINI_API_KEY=secret-key-value",
+            "STOCK_LIST=600519",
+            f"DATABASE_PATH={db_path}",
+        )
+
+        with patch.dict(os.environ, {}, clear=True):
+            status = self.service.get_setup_status()
+
+        storage_check = next(check for check in status["checks"] if check["key"] == "storage")
+        self.assertEqual(storage_check["status"], "configured")
+        self.assertFalse(missing_parent.exists())
 
     def test_export_desktop_env_returns_raw_text(self) -> None:
         self.env_path.write_text(
@@ -291,6 +397,21 @@ class SystemConfigServiceTestCase(unittest.TestCase):
 
         self.assertFalse(validation["valid"])
         self.assertTrue(any(issue["key"] == "LITELLM_MODEL" and issue["code"] == "unknown_model" for issue in validation["issues"]))
+
+    def test_validate_accepts_deepseek_v4_primary_model_for_channel(self) -> None:
+        validation = self.service.validate(
+            items=[
+                {"key": "LLM_CHANNELS", "value": "deepseek"},
+                {"key": "LLM_DEEPSEEK_PROTOCOL", "value": "deepseek"},
+                {"key": "LLM_DEEPSEEK_BASE_URL", "value": "https://api.deepseek.com"},
+                {"key": "LLM_DEEPSEEK_API_KEY", "value": "sk-test-value"},
+                {"key": "LLM_DEEPSEEK_MODELS", "value": "deepseek-v4-flash,deepseek-v4-pro"},
+                {"key": "LITELLM_MODEL", "value": "deepseek/deepseek-v4-flash"},
+            ]
+        )
+
+        self.assertTrue(validation["valid"], validation["issues"])
+        self.assertEqual(validation["issues"], [])
 
     def test_validate_reports_unknown_agent_primary_model_for_channels(self) -> None:
         validation = self.service.validate(
@@ -617,6 +738,96 @@ class SystemConfigServiceTestCase(unittest.TestCase):
         self.assertEqual(payload["resolved_protocol"], "ollama")
         self.assertEqual(payload["resolved_model"], "ollama/llama3")
 
+    @patch("litellm.completion")
+    def test_test_llm_channel_normalizes_kimi_temperature(self, mock_completion) -> None:
+        mock_completion.return_value = type(
+            "MockResponse",
+            (),
+            {
+                "choices": [type("Choice", (), {"message": type("Message", (), {"content": "OK"})()})()],
+            },
+        )()
+
+        payload = self.service.test_llm_channel(
+            name="primary",
+            protocol="openai",
+            base_url="https://api.moonshot.cn/v1",
+            api_key="sk-test-value",
+            models=["kimi-k2.6"],
+        )
+
+        self.assertTrue(payload["success"])
+        self.assertEqual(payload["resolved_model"], "openai/kimi-k2.6")
+        self.assertEqual(mock_completion.call_args.kwargs["temperature"], 1.0)
+
+    def test_update_switching_to_kimi_does_not_rewrite_saved_llm_temperature(self) -> None:
+        self._rewrite_env(
+            "LITELLM_MODEL=openai/gpt-4o-mini",
+            "LLM_TEMPERATURE=0.42",
+        )
+
+        response = self.service.update(
+            config_version=self.manager.get_config_version(),
+            items=[{"key": "LITELLM_MODEL", "value": "openai/kimi-k2.6"}],
+            reload_now=False,
+        )
+
+        self.assertTrue(response["success"])
+        current_map = self.manager.read_config_map()
+        self.assertEqual(current_map["LITELLM_MODEL"], "openai/kimi-k2.6")
+        self.assertEqual(current_map["LLM_TEMPERATURE"], "0.42")
+
+    @patch("litellm.completion")
+    def test_test_llm_channel_does_not_persist_normalized_kimi_temperature(self, mock_completion) -> None:
+        self._rewrite_env("LLM_TEMPERATURE=0.42")
+        mock_completion.return_value = type(
+            "MockResponse",
+            (),
+            {
+                "choices": [type("Choice", (), {"message": type("Message", (), {"content": "OK"})()})()],
+            },
+        )()
+
+        payload = self.service.test_llm_channel(
+            name="primary",
+            protocol="openai",
+            base_url="https://api.moonshot.cn/v1",
+            api_key="sk-test-value",
+            models=["kimi-k2.6"],
+        )
+
+        self.assertTrue(payload["success"])
+        self.assertEqual(mock_completion.call_args.kwargs["temperature"], 1.0)
+        self.assertEqual(self.manager.read_config_map()["LLM_TEMPERATURE"], "0.42")
+
+    @patch("litellm.completion")
+    @patch("src.services.system_config_service.Config._load_from_env")
+    def test_test_llm_channel_uses_runtime_temperature_for_non_kimi_models(
+        self,
+        mock_load_config,
+        mock_completion,
+    ) -> None:
+        mock_load_config.return_value = SimpleNamespace(llm_temperature=0.42)
+        mock_completion.return_value = type(
+            "MockResponse",
+            (),
+            {
+                "choices": [type("Choice", (), {"message": type("Message", (), {"content": "OK"})()})()],
+            },
+        )()
+
+        payload = self.service.test_llm_channel(
+            name="primary",
+            protocol="openai",
+            base_url="https://api.example.com/v1",
+            api_key="sk-test-value",
+            models=["gpt-4o-mini"],
+        )
+
+        self.assertTrue(payload["success"])
+        self.assertEqual(payload["resolved_model"], "openai/gpt-4o-mini")
+        self.assertEqual(mock_completion.call_args.kwargs["temperature"], 0.42)
+
     @patch("src.services.system_config_service.requests.get")
     def test_discover_llm_channel_models_returns_deduped_ids(self, mock_get) -> None:
         mock_response = Mock()
@@ -701,6 +912,11 @@ class SystemConfigServiceTestCase(unittest.TestCase):
         )
 
         self.assertEqual(models_url, "https://example.com/v1/models")
+
+    def test_build_llm_models_url_supports_deepseek_root_base_url(self) -> None:
+        models_url = SystemConfigService._build_llm_models_url("https://api.deepseek.com")
+
+        self.assertEqual(models_url, "https://api.deepseek.com/models")
 
     def test_validate_reports_invalid_event_rule_semantics(self) -> None:
         validation = self.service.validate(items=[{
