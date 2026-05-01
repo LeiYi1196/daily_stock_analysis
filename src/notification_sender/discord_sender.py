@@ -62,7 +62,7 @@ class DiscordSender:
 
         # 其次使用 Bot API（权限高，需要 channel_id）
         if self._discord_config['bot_token'] and self._discord_config['channel_id']:
-            return all(self._send_discord_bot(chunk) for chunk in chunks)
+            return all(self._send_discord_bot(chunk) for chunk in chunks if chunk.strip())
 
         logger.warning("Discord 配置不完整，跳过推送")
         return False
