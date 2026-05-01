@@ -55,12 +55,9 @@ class DiscordSender:
         except ValueError as e:
             logger.error(f"分割 Discord 消息失败: {e}, 尝试整段发送。")
             chunks = [content]
-
-        # 优先使用 Webhook（配置简单，权限低）
         if self._discord_config['webhook_url']:
             return all(self._send_discord_webhook(chunk) for chunk in chunks if chunk.strip())
-
-        # 其次使用 Bot API（权限高，需要 channel_id）
+        
         if self._discord_config['bot_token'] and self._discord_config['channel_id']:
             return all(self._send_discord_bot(chunk) for chunk in chunks if chunk.strip())
 
