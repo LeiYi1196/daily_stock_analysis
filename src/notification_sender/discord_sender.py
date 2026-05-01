@@ -58,7 +58,7 @@ class DiscordSender:
 
         # 优先使用 Webhook（配置简单，权限低）
         if self._discord_config['webhook_url']:
-            return all(self._send_discord_webhook(chunk) for chunk in chunks)
+            return all(self._send_discord_webhook(chunk) for chunk in chunks if chunk.strip())
 
         # 其次使用 Bot API（权限高，需要 channel_id）
         if self._discord_config['bot_token'] and self._discord_config['channel_id']:
